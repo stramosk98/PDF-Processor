@@ -11,13 +11,11 @@ public class PDFProtocol {
         private final byte[] pdfContent;
         private final String searchText;
         private final String fileName;
-        private final String tessdataPath;
 
-        public SearchRequest(byte[] pdfContent, String searchText, String fileName, String tessdataPath) {
+        public SearchRequest(byte[] pdfContent, String searchText, String fileName) {
             this.pdfContent = pdfContent;
             this.searchText = searchText;
             this.fileName = fileName;
-            this.tessdataPath = tessdataPath;
         }
 
         public byte[] getPdfContent() {
@@ -30,10 +28,6 @@ public class PDFProtocol {
 
         public String getFileName() {
             return fileName;
-        }
-
-        public String getTessdataPath() {
-            return tessdataPath;
         }
     }
 

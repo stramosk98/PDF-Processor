@@ -108,13 +108,6 @@ public class PDFServer {
                 
                 System.out.println("Processing PDF with OCR...");
                 OCRProcessor processor = OCRProcessor.getInstance();
-                
-                // Set tessdata path if provided
-                String tessdataPath = request.getTessdataPath();
-                if (tessdataPath != null && !tessdataPath.isEmpty()) {
-                    processor.setDataPath(tessdataPath);
-                }
-                
                 String extractedText = processor.extractTextFromImage(tempFile.toFile());
                 
                 if (extractedText == null || extractedText.isEmpty()) {

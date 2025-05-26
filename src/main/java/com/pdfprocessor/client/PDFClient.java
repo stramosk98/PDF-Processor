@@ -12,9 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
-import java.util.prefs.Preferences;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
@@ -36,35 +34,26 @@ public class PDFClient extends JFrame {
     private final JTextField hostField;
     private final JTextField portField;
     private final JTextField searchField;
-    private final JTextField tessdataField;
     private final JTextArea resultArea;
     private final JButton selectFileButton;
     private final JButton searchButton;
-    private final JButton configButton;
     private final DefaultListModel<String> fileListModel;
     private final JList<String> fileList;
     private final List<File> selectedFiles;
     private final ExecutorService executorService;
     private static final int MAX_CONCURRENT_SEARCHES = 2;
-    private final Semaphore ocrSemaphore;
-    private final Preferences prefs;
-    private static final String PREF_TESSDATA_PATH = "tessdataPath";
 
     public PDFClient() {
         super("PDF Search Client");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(5, 5));
 
-        // Initialize preferences
-        prefs = Preferences.userNodeForPackage(PDFClient.class);
-
-        // Initialize executor service and semaphore
+        // Initialize executor service
         executorService = Executors.newFixedThreadPool(MAX_CONCURRENT_SEARCHES);
-        ocrSemaphore = new Semaphore(1);
         selectedFiles = new ArrayList<>();
 
         // Create panels
-        JPanel topPanel = new JPanel(new GridLayout(4, 2, 5, 5));
+        JPanel topPanel = new JPanel(new GridLayout(3, 2, 5, 5));
         JPanel centerPanel = new JPanel(new BorderLayout(5, 5));
         JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 5));
 
@@ -72,12 +61,10 @@ public class PDFClient extends JFrame {
         hostField = new JTextField("localhost");
         portField = new JTextField(String.valueOf(PDFProtocol.DEFAULT_PORT));
         searchField = new JTextField();
-        tessdataField = new JTextField(prefs.get(PREF_TESSDATA_PATH, "/usr/share/tesseract-ocr/4.00/tessdata"));
         resultArea = new JTextArea();
         resultArea.setEditable(false);
         selectFileButton = new JButton("Select PDF Files");
         searchButton = new JButton("Search All");
-        configButton = new JButton("Set Tessdata Path");
         searchButton.setEnabled(false);
 
         // Initialize file list
@@ -93,15 +80,12 @@ public class PDFClient extends JFrame {
         topPanel.add(portField);
         topPanel.add(new JLabel("Search Text:"));
         topPanel.add(searchField);
-        topPanel.add(new JLabel("Tessdata Path:"));
-        topPanel.add(tessdataField);
 
         centerPanel.add(fileListScroller, BorderLayout.NORTH);
         centerPanel.add(new JScrollPane(resultArea), BorderLayout.CENTER);
 
         bottomPanel.add(selectFileButton);
         bottomPanel.add(searchButton);
-        bottomPanel.add(configButton);
 
         // Add panels to frame
         add(topPanel, BorderLayout.NORTH);
@@ -111,7 +95,6 @@ public class PDFClient extends JFrame {
         // Add button listeners
         selectFileButton.addActionListener(e -> selectFiles());
         searchButton.addActionListener(e -> performSearch());
-        configButton.addActionListener(e -> setTessdataPath());
 
         // Set frame properties
         setSize(800, 600);
@@ -180,69 +163,46 @@ public class PDFClient extends JFrame {
         }
     }
 
-    private void setTessdataPath() {
-        JFileChooser chooser = new JFileChooser(tessdataField.getText());
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        chooser.setDialogTitle("Select Tessdata Directory");
-        
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            String path = chooser.getSelectedFile().getAbsolutePath();
-            tessdataField.setText(path);
-            prefs.put(PREF_TESSDATA_PATH, path);
-        }
-    }
-
     private void processFile(File file, String host, int port, String searchText) {
         try {
             appendToResults("Starting search in: " + file.getName() + "\n");
             
-            // Acquire semaphore before starting OCR processing
-            appendToResults("Waiting for OCR processor availability for: " + file.getName() + "\n");
-            ocrSemaphore.acquire();
-            appendToResults("Processing OCR for: " + file.getName() + "\n");
-            
-            try {
-                Socket socket = new Socket();
-                socket.connect(new java.net.InetSocketAddress(host, port), 5000);
-                socket.setSoTimeout(60000);
-                socket.setTcpNoDelay(true);
-                socket.setKeepAlive(true);
+            Socket socket = new Socket();
+            socket.connect(new java.net.InetSocketAddress(host, port), 5000);
+            socket.setSoTimeout(60000);
+            socket.setTcpNoDelay(true);
+            socket.setKeepAlive(true);
 
-                try (ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-                     ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
+            try (ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+                 ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
 
-                    byte[] pdfContent = Files.readAllBytes(file.toPath());
-                    
-                    if (pdfContent.length > PDFProtocol.MAX_FILE_SIZE) {
-                        appendToResults("Error for " + file.getName() + ": File too large\n");
-                        return;
+                byte[] pdfContent = Files.readAllBytes(file.toPath());
+                
+                if (pdfContent.length > PDFProtocol.MAX_FILE_SIZE) {
+                    appendToResults("Error for " + file.getName() + ": File too large\n");
+                    return;
+                }
+
+                PDFProtocol.SearchRequest request = new PDFProtocol.SearchRequest(
+                    pdfContent, searchText, file.getName()
+                );
+
+                out.writeObject(request);
+                out.flush();
+
+                Object response = in.readObject();
+                if (response instanceof PDFProtocol.SearchResponse) {
+                    PDFProtocol.SearchResponse searchResponse = (PDFProtocol.SearchResponse) response;
+                    if (searchResponse.getError() != null) {
+                        appendToResults("Error in " + file.getName() + ": " + searchResponse.getError() + "\n");
+                    } else if (searchResponse.isFound()) {
+                        appendToResults("Found match in " + file.getName() + "!\nContext: " + searchResponse.getContext() + "\n\n");
+                    } else {
+                        appendToResults("No matches found in " + file.getName() + "\n");
                     }
-
-                    // Create request with tessdata path
-                    PDFProtocol.SearchRequest request = new PDFProtocol.SearchRequest(
-                        pdfContent, searchText, file.getName(), tessdataField.getText()
-                    );
-
-                    out.writeObject(request);
-                    out.flush();
-
-                    Object response = in.readObject();
-                    if (response instanceof PDFProtocol.SearchResponse) {
-                        PDFProtocol.SearchResponse searchResponse = (PDFProtocol.SearchResponse) response;
-                        if (searchResponse.getError() != null) {
-                            appendToResults("Error in " + file.getName() + ": " + searchResponse.getError() + "\n");
-                        } else if (searchResponse.isFound()) {
-                            appendToResults("Found match in " + file.getName() + "!\nContext: " + searchResponse.getContext() + "\n\n");
-                        } else {
-                            appendToResults("No matches found in " + file.getName() + "\n");
-                        }
-                    }
-                } finally {
-                    socket.close();
                 }
             } finally {
-                ocrSemaphore.release();
-                appendToResults("Completed processing: " + file.getName() + "\n");
+                socket.close();
             }
         } catch (Exception e) {
             appendToResults("Error processing " + file.getName() + ": " + e.getMessage() + "\n");
