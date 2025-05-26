@@ -8,19 +8,26 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 import javax.swing.BorderFactory;
+import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
-import javax.swing.SwingWorker;
 
 import com.pdfprocessor.shared.PDFProtocol;
 
@@ -31,12 +38,22 @@ public class PDFClient extends JFrame {
     private final JTextArea resultArea;
     private final JButton selectFileButton;
     private final JButton searchButton;
-    private File selectedFile;
+    private final DefaultListModel<String> fileListModel;
+    private final JList<String> fileList;
+    private final List<File> selectedFiles;
+    private final ExecutorService executorService;
+    private static final int MAX_CONCURRENT_SEARCHES = 2;
+    private final Semaphore ocrSemaphore;
 
     public PDFClient() {
         super("PDF Search Client");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(5, 5));
+
+        // Initialize executor service and semaphore
+        executorService = Executors.newFixedThreadPool(MAX_CONCURRENT_SEARCHES);
+        ocrSemaphore = new Semaphore(1); // Only allow one OCR operation at a time
+        selectedFiles = new ArrayList<>();
 
         // Create panels
         JPanel topPanel = new JPanel(new GridLayout(3, 2, 5, 5));
@@ -49,9 +66,15 @@ public class PDFClient extends JFrame {
         searchField = new JTextField();
         resultArea = new JTextArea();
         resultArea.setEditable(false);
-        selectFileButton = new JButton("Select PDF File");
-        searchButton = new JButton("Search");
+        selectFileButton = new JButton("Select PDF Files");
+        searchButton = new JButton("Search All");
         searchButton.setEnabled(false);
+
+        // Initialize file list
+        fileListModel = new DefaultListModel<>();
+        fileList = new JList<>(fileListModel);
+        JScrollPane fileListScroller = new JScrollPane(fileList);
+        fileListScroller.setBorder(BorderFactory.createTitledBorder("Selected Files"));
 
         // Add components to panels
         topPanel.add(new JLabel("Host:"));
@@ -61,6 +84,7 @@ public class PDFClient extends JFrame {
         topPanel.add(new JLabel("Search Text:"));
         topPanel.add(searchField);
 
+        centerPanel.add(fileListScroller, BorderLayout.NORTH);
         centerPanel.add(new JScrollPane(resultArea), BorderLayout.CENTER);
 
         bottomPanel.add(selectFileButton);
@@ -72,19 +96,25 @@ public class PDFClient extends JFrame {
         add(bottomPanel, BorderLayout.SOUTH);
 
         // Add button listeners
-        selectFileButton.addActionListener(e -> selectFile());
+        selectFileButton.addActionListener(e -> selectFiles());
         searchButton.addActionListener(e -> performSearch());
 
         // Set frame properties
-        setSize(600, 400);
+        setSize(800, 600);
         setLocationRelativeTo(null);
         
         // Add border padding
         ((JPanel)getContentPane()).setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        // Add shutdown hook for executor
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            shutdownExecutor();
+        }));
     }
 
-    private void selectFile() {
+    private void selectFiles() {
         JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setMultiSelectionEnabled(true);
         fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
             public boolean accept(File f) {
                 return f.isDirectory() || f.getName().toLowerCase().endsWith(".pdf");
@@ -96,15 +126,20 @@ public class PDFClient extends JFrame {
 
         int result = fileChooser.showOpenDialog(this);
         if (result == JFileChooser.APPROVE_OPTION) {
-            selectedFile = fileChooser.getSelectedFile();
-            selectFileButton.setText("Selected: " + selectedFile.getName());
-            searchButton.setEnabled(true);
+            File[] files = fileChooser.getSelectedFiles();
+            selectedFiles.clear();
+            fileListModel.clear();
+            for (File file : files) {
+                selectedFiles.add(file);
+                fileListModel.addElement(file.getName());
+            }
+            searchButton.setEnabled(!selectedFiles.isEmpty());
         }
     }
 
     private void performSearch() {
-        if (selectedFile == null || !selectedFile.exists()) {
-            JOptionPane.showMessageDialog(this, "Please select a PDF file first.", "Error", JOptionPane.ERROR_MESSAGE);
+        if (selectedFiles.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Please select PDF files first.", "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -125,99 +160,76 @@ public class PDFClient extends JFrame {
 
         // Disable UI during search
         setUIEnabled(false);
-        resultArea.setText("Searching...");
+        resultArea.setText("Processing files...\n");
 
-        new SwingWorker<PDFProtocol.SearchResponse, Void>() {
-            @Override
-            protected PDFProtocol.SearchResponse doInBackground() throws Exception {
-                System.out.println("Connecting to server at " + host + ":" + port);
-                
-                // Create socket with connection timeout
-                Socket socket = null;
-                try {
-                    socket = new Socket();
-                    socket.connect(new java.net.InetSocketAddress(host, port), 5000); // 5 seconds connection timeout
-                    socket.setSoTimeout(60000); // 60 seconds read timeout
-                    socket.setTcpNoDelay(true);
-                    socket.setKeepAlive(true);
-                    
-                    System.out.println("Connected to server, creating streams...");
-                    ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-                    out.flush(); // Important: flush the header
-                    
-                    System.out.println("Output stream created, creating input stream...");
-                    ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
-                    System.out.println("Input stream created successfully");
+        // Process each file concurrently
+        for (File file : selectedFiles) {
+            executorService.submit(() -> processFile(file, host, port, searchText));
+        }
+    }
 
-                    System.out.println("Reading PDF file: " + selectedFile.getName());
-                    byte[] pdfContent = Files.readAllBytes(selectedFile.toPath());
-                    System.out.println("PDF file size: " + pdfContent.length + " bytes");
+    private void processFile(File file, String host, int port, String searchText) {
+        try {
+            appendToResults("Starting search in: " + file.getName() + "\n");
+            
+            // Acquire semaphore before starting OCR processing
+            appendToResults("Waiting for OCR processor availability for: " + file.getName() + "\n");
+            ocrSemaphore.acquire();
+            appendToResults("Processing OCR for: " + file.getName() + "\n");
+            
+            try {
+                Socket socket = new Socket();
+                socket.connect(new java.net.InetSocketAddress(host, port), 5000);
+                socket.setSoTimeout(60000);
+                socket.setTcpNoDelay(true);
+                socket.setKeepAlive(true);
+
+                try (ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+                     ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
+
+                    byte[] pdfContent = Files.readAllBytes(file.toPath());
                     
                     if (pdfContent.length > PDFProtocol.MAX_FILE_SIZE) {
-                        throw new Exception("PDF file is too large. Maximum size is " + 
-                            (PDFProtocol.MAX_FILE_SIZE / (1024 * 1024)) + "MB");
+                        appendToResults("Error for " + file.getName() + ": File too large\n");
+                        return;
                     }
-                    
-                    System.out.println("Creating search request for phrase: " + searchText);
+
                     PDFProtocol.SearchRequest request = new PDFProtocol.SearchRequest(
-                        pdfContent, searchText, selectedFile.getName()
+                        pdfContent, searchText, file.getName()
                     );
 
-                    System.out.println("Sending request to server...");
                     out.writeObject(request);
                     out.flush();
-                    System.out.println("Request sent, waiting for response...");
-                    
-                    try {
-                        Object response = in.readObject();
-                        System.out.println("Response received from server");
-                        
-                        if (response == null) {
-                            throw new Exception("Server returned null response");
-                        }
-                        if (!(response instanceof PDFProtocol.SearchResponse)) {
-                            throw new Exception("Invalid response type from server: " + response.getClass().getName());
-                        }
-                        return (PDFProtocol.SearchResponse) response;
-                    } catch (java.io.EOFException e) {
-                        throw new Exception("Lost connection to server while waiting for response. Please try again.", e);
-                    }
-                } catch (Exception e) {
-                    System.out.println("Error in search operation: " + e.getMessage());
-                    e.printStackTrace();
-                    throw e;
-                } finally {
-                    if (socket != null) {
-                        try {
-                            if (!socket.isClosed()) {
-                                socket.close();
-                            }
-                        } catch (Exception e) {
-                            System.out.println("Error closing socket: " + e.getMessage());
-                        }
-                    }
-                }
-            }
 
-            @Override
-            protected void done() {
-                try {
-                    PDFProtocol.SearchResponse response = get();
-                    if (response.getError() != null) {
-                        resultArea.setText("Error: " + response.getError());
-                    } else if (response.isFound()) {
-                        resultArea.setText("Found match!\nContext: " + response.getContext());
-                    } else {
-                        resultArea.setText("No matches found in the document.");
+                    Object response = in.readObject();
+                    if (response instanceof PDFProtocol.SearchResponse) {
+                        PDFProtocol.SearchResponse searchResponse = (PDFProtocol.SearchResponse) response;
+                        if (searchResponse.getError() != null) {
+                            appendToResults("Error in " + file.getName() + ": " + searchResponse.getError() + "\n");
+                        } else if (searchResponse.isFound()) {
+                            appendToResults("Found match in " + file.getName() + "!\nContext: " + searchResponse.getContext() + "\n\n");
+                        } else {
+                            appendToResults("No matches found in " + file.getName() + "\n");
+                        }
                     }
-                } catch (Exception e) {
-                    System.out.println("Error during search: " + e.getMessage());
-                    resultArea.setText("Error: " + e.getMessage());
                 } finally {
-                    setUIEnabled(true);
+                    socket.close();
                 }
+            } finally {
+                // Always release the semaphore in the finally block
+                ocrSemaphore.release();
+                appendToResults("Completed processing: " + file.getName() + "\n");
             }
-        }.execute();
+        } catch (Exception e) {
+            appendToResults("Error processing " + file.getName() + ": " + e.getMessage() + "\n");
+        }
+    }
+
+    private void appendToResults(String text) {
+        SwingUtilities.invokeLater(() -> {
+            resultArea.append(text);
+            resultArea.setCaretPosition(resultArea.getDocument().getLength());
+        });
     }
 
     private void setUIEnabled(boolean enabled) {
@@ -225,7 +237,21 @@ public class PDFClient extends JFrame {
         portField.setEnabled(enabled);
         searchField.setEnabled(enabled);
         selectFileButton.setEnabled(enabled);
-        searchButton.setEnabled(enabled && selectedFile != null);
+        searchButton.setEnabled(enabled && !selectedFiles.isEmpty());
+        if (enabled) {
+            appendToResults("\n--- Search completed ---\n");
+        }
+    }
+
+    private void shutdownExecutor() {
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
+                executorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+        }
     }
 
     public static void main(String[] args) {
