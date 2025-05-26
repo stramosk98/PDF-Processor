@@ -53,75 +53,150 @@ public class PDFServer {
     }
 
     private void handleClient(Socket clientSocket) {
-        try (ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream());
-             ObjectInputStream in = new ObjectInputStream(clientSocket.getInputStream())) {
+        System.out.println("Handling client connection from: " + clientSocket.getInetAddress());
+        ObjectOutputStream out = null;
+        ObjectInputStream in = null;
+        
+        try {
+            // Configure socket
+            clientSocket.setSoTimeout(60000); // 60 seconds timeout
+            clientSocket.setTcpNoDelay(true);
+            clientSocket.setKeepAlive(true);
             
-            PDFProtocol.SearchRequest request = (PDFProtocol.SearchRequest) in.readObject();
+            System.out.println("Creating output stream...");
+            out = new ObjectOutputStream(clientSocket.getOutputStream());
+            out.flush(); // Important: flush the header
+            
+            System.out.println("Creating input stream...");
+            in = new ObjectInputStream(clientSocket.getInputStream());
+            
+            System.out.println("Reading request object...");
+            Object requestObj = in.readObject();
+            
+            if (!(requestObj instanceof PDFProtocol.SearchRequest)) {
+                System.out.println("Invalid request type: " + (requestObj != null ? requestObj.getClass().getName() : "null"));
+                sendErrorResponse(out, "Invalid request type");
+                return;
+            }
+            
+            PDFProtocol.SearchRequest request = (PDFProtocol.SearchRequest) requestObj;
+            System.out.println("Processing search request for file: " + request.getFileName() + 
+                             ", search phrase: '" + request.getSearchPhrase() + "'");
             
             // Validate request
-            if (request == null || request.getPdfContent() == null || request.getSearchPhrase() == null) {
-                out.writeObject(new PDFProtocol.SearchResponse(false, null, "Invalid request data"));
-                out.flush();
+            if (request.getPdfContent() == null || request.getSearchPhrase() == null) {
+                System.out.println("Invalid request data - null content or search phrase");
+                sendErrorResponse(out, "Invalid request data");
                 return;
             }
 
             if (request.getPdfContent().length > PDFProtocol.MAX_FILE_SIZE) {
-                out.writeObject(new PDFProtocol.SearchResponse(false, null, 
-                    "PDF file too large. Maximum size is " + (PDFProtocol.MAX_FILE_SIZE / (1024 * 1024)) + "MB"));
-                out.flush();
+                System.out.println("PDF file too large: " + request.getPdfContent().length + " bytes");
+                sendErrorResponse(out, "PDF file too large. Maximum size is " + 
+                    (PDFProtocol.MAX_FILE_SIZE / (1024 * 1024)) + "MB");
                 return;
             }
             
             // Create temporary file
-            Path tempFile = Files.createTempFile("pdf_", ".pdf");
+            Path tempFile = null;
             try {
+                tempFile = Files.createTempFile("pdf_", ".pdf");
+                System.out.println("Created temporary file: " + tempFile);
+                
+                System.out.println("Writing PDF content to temporary file...");
                 Files.write(tempFile, request.getPdfContent());
                 
+                System.out.println("Processing PDF with OCR...");
                 OCRProcessor processor = OCRProcessor.getInstance();
                 String extractedText = processor.extractTextFromImage(tempFile.toFile());
+                
+                if (extractedText == null || extractedText.isEmpty()) {
+                    System.out.println("OCR produced no text output");
+                    sendErrorResponse(out, "No text could be extracted from the PDF");
+                    return;
+                }
+                
                 String formattedText = extractedText.replaceAll("\\r|\\n", " ").toLowerCase();
                 String searchPhrase = request.getSearchPhrase().toLowerCase();
                 
+                System.out.println("Searching for phrase: '" + searchPhrase + "'");
                 PDFProtocol.SearchResponse response;
                 if (formattedText.contains(searchPhrase)) {
                     int index = formattedText.indexOf(searchPhrase);
                     String context = extractContext(formattedText, index, searchPhrase);
                     response = new PDFProtocol.SearchResponse(true, context, null);
+                    System.out.println("Match found with context");
                 } else {
                     response = new PDFProtocol.SearchResponse(false, null, null);
+                    System.out.println("No match found");
                 }
                 
-                out.writeObject(response);
-                out.flush();
+                if (!clientSocket.isClosed() && clientSocket.isConnected()) {
+                    System.out.println("Sending response to client...");
+                    out.writeObject(response);
+                    out.flush();
+                    System.out.println("Response sent successfully");
+                } else {
+                    System.out.println("Client connection lost before sending response");
+                }
                 
             } catch (TesseractException e) {
-                System.out.println("Error processing PDF: " + e.getMessage());
-                out.writeObject(new PDFProtocol.SearchResponse(false, null, "Error processing PDF: " + e.getMessage()));
-                out.flush();
+                System.out.println("Tesseract error: " + e.getMessage());
+                e.printStackTrace();
+                sendErrorResponse(out, "Error processing PDF: " + e.getMessage());
             } finally {
-                try {
-                    Files.deleteIfExists(tempFile);
-                } catch (IOException e) {
-                    System.out.println("Error deleting temporary file: " + e.getMessage());
+                if (tempFile != null) {
+                    try {
+                        Files.deleteIfExists(tempFile);
+                        System.out.println("Temporary file deleted");
+                    } catch (IOException e) {
+                        System.out.println("Error deleting temporary file: " + e.getMessage());
+                    }
                 }
             }
             
         } catch (Exception e) {
             System.out.println("Error handling client request: " + e.getMessage());
             e.printStackTrace();
-            try (ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream())) {
-                out.writeObject(new PDFProtocol.SearchResponse(false, null, "Server error: " + e.getMessage()));
-                out.flush();
-            } catch (IOException ex) {
-                System.out.println("Error sending error response to client: " + ex.getMessage());
-            }
+            sendErrorResponse(out, "Server error: " + e.getMessage());
         } finally {
+            System.out.println("Cleaning up connection...");
+            // Close streams
+            if (out != null) {
+                try {
+                    out.flush();
+                    out.close();
+                } catch (IOException e) {
+                    System.out.println("Error closing output stream: " + e.getMessage());
+                }
+            }
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException e) {
+                    System.out.println("Error closing input stream: " + e.getMessage());
+                }
+            }
+            // Close socket
             try {
                 if (!clientSocket.isClosed()) {
                     clientSocket.close();
                 }
             } catch (IOException e) {
                 System.out.println("Error closing client socket: " + e.getMessage());
+            }
+            System.out.println("Connection cleanup completed");
+        }
+    }
+
+    private void sendErrorResponse(ObjectOutputStream out, String errorMessage) {
+        if (out != null) {
+            try {
+                System.out.println("Sending error response: " + errorMessage);
+                out.writeObject(new PDFProtocol.SearchResponse(false, null, errorMessage));
+                out.flush();
+            } catch (IOException e) {
+                System.out.println("Error sending error response: " + e.getMessage());
             }
         }
     }

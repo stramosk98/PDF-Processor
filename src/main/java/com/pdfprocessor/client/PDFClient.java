@@ -131,34 +131,71 @@ public class PDFClient extends JFrame {
             @Override
             protected PDFProtocol.SearchResponse doInBackground() throws Exception {
                 System.out.println("Connecting to server at " + host + ":" + port);
-                try (Socket socket = new Socket(host, port);
-                     ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-                     ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
+                
+                // Create socket with connection timeout
+                Socket socket = null;
+                try {
+                    socket = new Socket();
+                    socket.connect(new java.net.InetSocketAddress(host, port), 5000); // 5 seconds connection timeout
+                    socket.setSoTimeout(60000); // 60 seconds read timeout
+                    socket.setTcpNoDelay(true);
+                    socket.setKeepAlive(true);
+                    
+                    System.out.println("Connected to server, creating streams...");
+                    ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+                    out.flush(); // Important: flush the header
+                    
+                    System.out.println("Output stream created, creating input stream...");
+                    ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+                    System.out.println("Input stream created successfully");
 
+                    System.out.println("Reading PDF file: " + selectedFile.getName());
                     byte[] pdfContent = Files.readAllBytes(selectedFile.toPath());
+                    System.out.println("PDF file size: " + pdfContent.length + " bytes");
+                    
                     if (pdfContent.length > PDFProtocol.MAX_FILE_SIZE) {
                         throw new Exception("PDF file is too large. Maximum size is " + 
                             (PDFProtocol.MAX_FILE_SIZE / (1024 * 1024)) + "MB");
                     }
                     
+                    System.out.println("Creating search request for phrase: " + searchText);
                     PDFProtocol.SearchRequest request = new PDFProtocol.SearchRequest(
                         pdfContent, searchText, selectedFile.getName()
                     );
 
+                    System.out.println("Sending request to server...");
                     out.writeObject(request);
-                    out.flush(); // Ensure the request is fully sent
+                    out.flush();
+                    System.out.println("Request sent, waiting for response...");
                     
-                    Object response = in.readObject();
-                    if (response == null) {
-                        throw new Exception("Server returned null response");
+                    try {
+                        Object response = in.readObject();
+                        System.out.println("Response received from server");
+                        
+                        if (response == null) {
+                            throw new Exception("Server returned null response");
+                        }
+                        if (!(response instanceof PDFProtocol.SearchResponse)) {
+                            throw new Exception("Invalid response type from server: " + response.getClass().getName());
+                        }
+                        return (PDFProtocol.SearchResponse) response;
+                    } catch (java.io.EOFException e) {
+                        throw new Exception("Lost connection to server while waiting for response. Please try again.", e);
                     }
-                    if (!(response instanceof PDFProtocol.SearchResponse)) {
-                        throw new Exception("Invalid response type from server");
-                    }
-                    return (PDFProtocol.SearchResponse) response;
                 } catch (Exception e) {
                     System.out.println("Error in search operation: " + e.getMessage());
+                    e.printStackTrace();
                     throw e;
+                } finally {
+                    if (socket != null) {
+                        try {
+                            if (!socket.isClosed()) {
+                                socket.close();
+                            }
+                        } catch (Exception e) {
+                            System.out.println("Error closing socket: " + e.getMessage());
+                        }
+                    }
                 }
             }
 
