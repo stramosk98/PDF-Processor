@@ -26,6 +26,20 @@ public class OCRProcessor {
         tesseract.setOcrEngineMode(1); // Neural nets LSTM engine
     }
 
+    public void setDataPath(String path) {
+        if (path != null && new File(path).exists()) {
+            System.out.println("Setting Tesseract data path to: " + path);
+            tesseract.setDatapath(path);
+            this.dataPath = path;
+        } else {
+            System.out.println("Warning: Invalid tessdata path provided: " + path);
+        }
+    }
+
+    public String getDataPath() {
+        return dataPath;
+    }
+
     private void configureDataPath() {
         String configuredPath = null;
         
@@ -53,38 +67,17 @@ public class OCRProcessor {
         }
     }
 
+    public String extractTextFromImage(File imageFile) throws TesseractException {
+        if (dataPath == null || !new File(dataPath).exists()) {
+            throw new TesseractException("Tesseract data path is not properly configured");
+        }
+        return tesseract.doOCR(imageFile);
+    }
+
     public static synchronized OCRProcessor getInstance() {
         if (instance == null) {
             instance = new OCRProcessor();
         }
         return instance;
-    }
-
-    public String extractTextFromImage(File imageFile) throws TesseractException {
-        if (!imageFile.exists()) {
-            throw new TesseractException("PDF file does not exist: " + imageFile.getAbsolutePath());
-        }
-        
-        try {
-            System.out.println("Starting OCR processing for file: " + imageFile.getName());
-            System.out.println("Using Tesseract data path: " + this.dataPath);
-            
-            String result = tesseract.doOCR(imageFile);
-            
-            if (result == null || result.trim().isEmpty()) {
-                System.out.println("Warning: OCR produced no text output");
-            } else {
-                System.out.println("OCR processing completed successfully");
-            }
-            
-            return result;
-            
-        } catch (TesseractException e) {
-            System.out.println("Tesseract OCR error: " + e.getMessage());
-            if (this.dataPath == null || !new File(this.dataPath).exists()) {
-                throw new TesseractException("Tesseract data path not found. Please ensure Tesseract is properly installed on the server.");
-            }
-            throw e;
-        }
     }
 } 

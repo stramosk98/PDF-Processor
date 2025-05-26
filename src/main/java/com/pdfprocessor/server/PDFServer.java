@@ -81,10 +81,10 @@ public class PDFServer {
             
             PDFProtocol.SearchRequest request = (PDFProtocol.SearchRequest) requestObj;
             System.out.println("Processing search request for file: " + request.getFileName() + 
-                             ", search phrase: '" + request.getSearchPhrase() + "'");
+                             ", search phrase: '" + request.getSearchText() + "'");
             
             // Validate request
-            if (request.getPdfContent() == null || request.getSearchPhrase() == null) {
+            if (request.getPdfContent() == null || request.getSearchText() == null) {
                 System.out.println("Invalid request data - null content or search phrase");
                 sendErrorResponse(out, "Invalid request data");
                 return;
@@ -108,6 +108,13 @@ public class PDFServer {
                 
                 System.out.println("Processing PDF with OCR...");
                 OCRProcessor processor = OCRProcessor.getInstance();
+                
+                // Set tessdata path if provided
+                String tessdataPath = request.getTessdataPath();
+                if (tessdataPath != null && !tessdataPath.isEmpty()) {
+                    processor.setDataPath(tessdataPath);
+                }
+                
                 String extractedText = processor.extractTextFromImage(tempFile.toFile());
                 
                 if (extractedText == null || extractedText.isEmpty()) {
@@ -117,7 +124,7 @@ public class PDFServer {
                 }
                 
                 String formattedText = extractedText.replaceAll("\\r|\\n", " ").toLowerCase();
-                String searchPhrase = request.getSearchPhrase().toLowerCase();
+                String searchPhrase = request.getSearchText().toLowerCase();
                 
                 System.out.println("Searching for phrase: '" + searchPhrase + "'");
                 PDFProtocol.SearchResponse response;
