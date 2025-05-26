@@ -44,7 +44,7 @@ public class PDFClient extends JFrame {
         JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 5));
 
         // Initialize components
-        hostField = new JTextField("192.168.1.7");
+        hostField = new JTextField("localhost");
         portField = new JTextField(String.valueOf(PDFProtocol.DEFAULT_PORT));
         searchField = new JTextField();
         resultArea = new JTextArea();
