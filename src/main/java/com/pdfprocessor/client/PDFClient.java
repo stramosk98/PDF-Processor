@@ -1,7 +1,5 @@
 package com.pdfprocessor.client;
 
-import com.pdfprocessor.shared.PDFProtocol;
-
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
@@ -24,6 +22,8 @@ import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 
+import com.pdfprocessor.shared.PDFProtocol;
+
 public class PDFClient extends JFrame {
     private final JTextField hostField;
     private final JTextField portField;
@@ -44,7 +44,7 @@ public class PDFClient extends JFrame {
         JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 5));
 
         // Initialize components
-        hostField = new JTextField("localhost");
+        hostField = new JTextField("192.168.1.7");
         portField = new JTextField(String.valueOf(PDFProtocol.DEFAULT_PORT));
         searchField = new JTextField();
         resultArea = new JTextArea();
@@ -130,17 +130,35 @@ public class PDFClient extends JFrame {
         new SwingWorker<PDFProtocol.SearchResponse, Void>() {
             @Override
             protected PDFProtocol.SearchResponse doInBackground() throws Exception {
-                try (Socket socket = new Socket(host, port)) {
-                    ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-                    ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+                System.out.println("Connecting to server at " + host + ":" + port);
+                try (Socket socket = new Socket(host, port);
+                     ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+                     ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
 
                     byte[] pdfContent = Files.readAllBytes(selectedFile.toPath());
+                    if (pdfContent.length > PDFProtocol.MAX_FILE_SIZE) {
+                        throw new Exception("PDF file is too large. Maximum size is " + 
+                            (PDFProtocol.MAX_FILE_SIZE / (1024 * 1024)) + "MB");
+                    }
+                    
                     PDFProtocol.SearchRequest request = new PDFProtocol.SearchRequest(
                         pdfContent, searchText, selectedFile.getName()
                     );
 
                     out.writeObject(request);
-                    return (PDFProtocol.SearchResponse) in.readObject();
+                    out.flush(); // Ensure the request is fully sent
+                    
+                    Object response = in.readObject();
+                    if (response == null) {
+                        throw new Exception("Server returned null response");
+                    }
+                    if (!(response instanceof PDFProtocol.SearchResponse)) {
+                        throw new Exception("Invalid response type from server");
+                    }
+                    return (PDFProtocol.SearchResponse) response;
+                } catch (Exception e) {
+                    System.out.println("Error in search operation: " + e.getMessage());
+                    throw e;
                 }
             }
 

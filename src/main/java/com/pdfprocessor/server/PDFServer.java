@@ -53,40 +53,73 @@ public class PDFServer {
     }
 
     private void handleClient(Socket clientSocket) {
-        try (ObjectInputStream in = new ObjectInputStream(clientSocket.getInputStream());
-             ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream())) {
+        try (ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream());
+             ObjectInputStream in = new ObjectInputStream(clientSocket.getInputStream())) {
             
             PDFProtocol.SearchRequest request = (PDFProtocol.SearchRequest) in.readObject();
             
+            // Validate request
+            if (request == null || request.getPdfContent() == null || request.getSearchPhrase() == null) {
+                out.writeObject(new PDFProtocol.SearchResponse(false, null, "Invalid request data"));
+                out.flush();
+                return;
+            }
+
+            if (request.getPdfContent().length > PDFProtocol.MAX_FILE_SIZE) {
+                out.writeObject(new PDFProtocol.SearchResponse(false, null, 
+                    "PDF file too large. Maximum size is " + (PDFProtocol.MAX_FILE_SIZE / (1024 * 1024)) + "MB"));
+                out.flush();
+                return;
+            }
+            
             // Create temporary file
             Path tempFile = Files.createTempFile("pdf_", ".pdf");
-            Files.write(tempFile, request.getPdfContent());
-            
             try {
+                Files.write(tempFile, request.getPdfContent());
+                
                 OCRProcessor processor = OCRProcessor.getInstance();
                 String extractedText = processor.extractTextFromImage(tempFile.toFile());
                 String formattedText = extractedText.replaceAll("\\r|\\n", " ").toLowerCase();
                 String searchPhrase = request.getSearchPhrase().toLowerCase();
                 
+                PDFProtocol.SearchResponse response;
                 if (formattedText.contains(searchPhrase)) {
                     int index = formattedText.indexOf(searchPhrase);
                     String context = extractContext(formattedText, index, searchPhrase);
-                    out.writeObject(new PDFProtocol.SearchResponse(true, context, null));
+                    response = new PDFProtocol.SearchResponse(true, context, null);
                 } else {
-                    out.writeObject(new PDFProtocol.SearchResponse(false, null, null));
+                    response = new PDFProtocol.SearchResponse(false, null, null);
                 }
+                
+                out.writeObject(response);
+                out.flush();
+                
             } catch (TesseractException e) {
                 System.out.println("Error processing PDF: " + e.getMessage());
-                out.writeObject(new PDFProtocol.SearchResponse(false, null, e.getMessage()));
+                out.writeObject(new PDFProtocol.SearchResponse(false, null, "Error processing PDF: " + e.getMessage()));
+                out.flush();
             } finally {
-                Files.deleteIfExists(tempFile);
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException e) {
+                    System.out.println("Error deleting temporary file: " + e.getMessage());
+                }
             }
             
         } catch (Exception e) {
             System.out.println("Error handling client request: " + e.getMessage());
+            e.printStackTrace();
+            try (ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream())) {
+                out.writeObject(new PDFProtocol.SearchResponse(false, null, "Server error: " + e.getMessage()));
+                out.flush();
+            } catch (IOException ex) {
+                System.out.println("Error sending error response to client: " + ex.getMessage());
+            }
         } finally {
             try {
-                clientSocket.close();
+                if (!clientSocket.isClosed()) {
+                    clientSocket.close();
+                }
             } catch (IOException e) {
                 System.out.println("Error closing client socket: " + e.getMessage());
             }
