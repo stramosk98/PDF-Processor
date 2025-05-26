@@ -4,30 +4,36 @@ import java.io.Serializable;
 
 public class PDFProtocol {
     public static final int DEFAULT_PORT = 12349;
-    public static final int MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+    public static final int MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
     public static class SearchRequest implements Serializable {
         private static final long serialVersionUID = 1L;
         private final byte[] pdfContent;
-        private final String searchPhrase;
+        private final String searchText;
         private final String fileName;
+        private final String tessdataPath;
 
-        public SearchRequest(byte[] pdfContent, String searchPhrase, String fileName) {
+        public SearchRequest(byte[] pdfContent, String searchText, String fileName, String tessdataPath) {
             this.pdfContent = pdfContent;
-            this.searchPhrase = searchPhrase;
+            this.searchText = searchText;
             this.fileName = fileName;
+            this.tessdataPath = tessdataPath;
         }
 
         public byte[] getPdfContent() {
             return pdfContent;
         }
 
-        public String getSearchPhrase() {
-            return searchPhrase;
+        public String getSearchText() {
+            return searchText;
         }
 
         public String getFileName() {
             return fileName;
+        }
+
+        public String getTessdataPath() {
+            return tessdataPath;
         }
     }
 

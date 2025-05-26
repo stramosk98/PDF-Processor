@@ -14,6 +14,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.prefs.Preferences;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
@@ -35,28 +36,35 @@ public class PDFClient extends JFrame {
     private final JTextField hostField;
     private final JTextField portField;
     private final JTextField searchField;
+    private final JTextField tessdataField;
     private final JTextArea resultArea;
     private final JButton selectFileButton;
     private final JButton searchButton;
+    private final JButton configButton;
     private final DefaultListModel<String> fileListModel;
     private final JList<String> fileList;
     private final List<File> selectedFiles;
     private final ExecutorService executorService;
     private static final int MAX_CONCURRENT_SEARCHES = 2;
     private final Semaphore ocrSemaphore;
+    private final Preferences prefs;
+    private static final String PREF_TESSDATA_PATH = "tessdataPath";
 
     public PDFClient() {
         super("PDF Search Client");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(5, 5));
 
+        // Initialize preferences
+        prefs = Preferences.userNodeForPackage(PDFClient.class);
+
         // Initialize executor service and semaphore
         executorService = Executors.newFixedThreadPool(MAX_CONCURRENT_SEARCHES);
-        ocrSemaphore = new Semaphore(1); // Only allow one OCR operation at a time
+        ocrSemaphore = new Semaphore(1);
         selectedFiles = new ArrayList<>();
 
         // Create panels
-        JPanel topPanel = new JPanel(new GridLayout(3, 2, 5, 5));
+        JPanel topPanel = new JPanel(new GridLayout(4, 2, 5, 5));
         JPanel centerPanel = new JPanel(new BorderLayout(5, 5));
         JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 5));
 
@@ -64,10 +72,12 @@ public class PDFClient extends JFrame {
         hostField = new JTextField("localhost");
         portField = new JTextField(String.valueOf(PDFProtocol.DEFAULT_PORT));
         searchField = new JTextField();
+        tessdataField = new JTextField(prefs.get(PREF_TESSDATA_PATH, "/usr/share/tesseract-ocr/4.00/tessdata"));
         resultArea = new JTextArea();
         resultArea.setEditable(false);
         selectFileButton = new JButton("Select PDF Files");
         searchButton = new JButton("Search All");
+        configButton = new JButton("Set Tessdata Path");
         searchButton.setEnabled(false);
 
         // Initialize file list
@@ -83,12 +93,15 @@ public class PDFClient extends JFrame {
         topPanel.add(portField);
         topPanel.add(new JLabel("Search Text:"));
         topPanel.add(searchField);
+        topPanel.add(new JLabel("Tessdata Path:"));
+        topPanel.add(tessdataField);
 
         centerPanel.add(fileListScroller, BorderLayout.NORTH);
         centerPanel.add(new JScrollPane(resultArea), BorderLayout.CENTER);
 
         bottomPanel.add(selectFileButton);
         bottomPanel.add(searchButton);
+        bottomPanel.add(configButton);
 
         // Add panels to frame
         add(topPanel, BorderLayout.NORTH);
@@ -98,6 +111,7 @@ public class PDFClient extends JFrame {
         // Add button listeners
         selectFileButton.addActionListener(e -> selectFiles());
         searchButton.addActionListener(e -> performSearch());
+        configButton.addActionListener(e -> setTessdataPath());
 
         // Set frame properties
         setSize(800, 600);
@@ -107,9 +121,7 @@ public class PDFClient extends JFrame {
         ((JPanel)getContentPane()).setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
         // Add shutdown hook for executor
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            shutdownExecutor();
-        }));
+        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdownExecutor));
     }
 
     private void selectFiles() {
@@ -168,6 +180,18 @@ public class PDFClient extends JFrame {
         }
     }
 
+    private void setTessdataPath() {
+        JFileChooser chooser = new JFileChooser(tessdataField.getText());
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        chooser.setDialogTitle("Select Tessdata Directory");
+        
+        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            String path = chooser.getSelectedFile().getAbsolutePath();
+            tessdataField.setText(path);
+            prefs.put(PREF_TESSDATA_PATH, path);
+        }
+    }
+
     private void processFile(File file, String host, int port, String searchText) {
         try {
             appendToResults("Starting search in: " + file.getName() + "\n");
@@ -194,8 +218,9 @@ public class PDFClient extends JFrame {
                         return;
                     }
 
+                    // Create request with tessdata path
                     PDFProtocol.SearchRequest request = new PDFProtocol.SearchRequest(
-                        pdfContent, searchText, file.getName()
+                        pdfContent, searchText, file.getName(), tessdataField.getText()
                     );
 
                     out.writeObject(request);
@@ -216,7 +241,6 @@ public class PDFClient extends JFrame {
                     socket.close();
                 }
             } finally {
-                // Always release the semaphore in the finally block
                 ocrSemaphore.release();
                 appendToResults("Completed processing: " + file.getName() + "\n");
             }
