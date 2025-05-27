@@ -26,14 +26,6 @@ public class OCRProcessor {
         
         if (!tessDataDir.exists() || !engTrainedData.exists()) {
             System.out.println("\n=== Tesseract Installation Required ===");
-            System.out.println("Please follow these steps to install Tesseract:");
-            System.out.println("1. Download Tesseract installer from: https://github.com/UB-Mannheim/tesseract/wiki");
-            System.out.println("2. Run the installer (choose 64-bit version)");
-            System.out.println("3. Install to the default location (C:\\Program Files\\Tesseract-OCR)");
-            System.out.println("4. Download eng.traineddata from: https://github.com/tesseract-ocr/tessdata");
-            System.out.println("5. Place eng.traineddata in: " + TESSDATA_PATH);
-            System.out.println("6. Restart the server");
-            System.out.println("=======================================\n");
         } else {
             System.out.println("Using Tesseract data path: " + TESSDATA_PATH);
             tesseract.setDatapath(TESSDATA_PATH);
@@ -42,9 +34,6 @@ public class OCRProcessor {
 
     public String extractTextFromImage(File imageFile) throws TesseractException {
         File engTrainedData = new File(TESSDATA_PATH, "eng.traineddata");
-        if (!engTrainedData.exists()) {
-            throw new TesseractException("Tesseract is not properly configured. Please check server logs for installation instructions.");
-        }
         return tesseract.doOCR(imageFile);
     }
 

@@ -25,9 +25,7 @@ public class PDFServer {
 
     public PDFServer(int port) {
         this.port = port;
-        this.executorService = Executors.newFixedThreadPool(
-            Config.getInstance().getMaxConcurrentThreads()
-        );
+        this.executorService = Executors.newFixedThreadPool(2);
     }
 
     public void start() {

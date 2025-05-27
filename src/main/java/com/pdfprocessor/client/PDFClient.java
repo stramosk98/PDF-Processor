@@ -41,7 +41,6 @@ public class PDFClient extends JFrame {
     private final JList<String> fileList;
     private final List<File> selectedFiles;
     private final ExecutorService executorService;
-    private static final int MAX_CONCURRENT_SEARCHES = 2;
     private int completedSearches;
     private final Object completionLock = new Object();
 
@@ -50,11 +49,9 @@ public class PDFClient extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(5, 5));
 
-        // Initialize executor service
-        executorService = Executors.newFixedThreadPool(MAX_CONCURRENT_SEARCHES);
+        executorService = Executors.newFixedThreadPool(2);
         selectedFiles = new ArrayList<>();
 
-        // Create panels
         JPanel topPanel = new JPanel(new GridLayout(3, 2, 5, 5));
         JPanel centerPanel = new JPanel(new BorderLayout(5, 5));
         JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 5));
@@ -141,15 +138,9 @@ public class PDFClient extends JFrame {
         }
 
         String host = hostField.getText().trim();
-        int port;
-        try {
-            port = Integer.parseInt(portField.getText().trim());
-        } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(this, "Invalid port number.", "Error", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
+        int port = Integer.parseInt(portField.getText().trim());
         String searchText = searchField.getText().trim();
+
         if (searchText.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Please enter search text.", "Error", JOptionPane.ERROR_MESSAGE);
             return;
@@ -191,15 +182,14 @@ public class PDFClient extends JFrame {
             
             Socket socket = new Socket();
             socket.connect(new java.net.InetSocketAddress(host, port), 5000);
-            socket.setSoTimeout(60000);
             socket.setTcpNoDelay(true);
             socket.setKeepAlive(true);
 
             try (ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-                 ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
+                ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
 
                 byte[] pdfContent = Files.readAllBytes(file.toPath());
-                
+
                 if (pdfContent.length > PDFProtocol.MAX_FILE_SIZE) {
                     appendToResults("Error for " + file.getName() + ": File too large\n");
                     return;
@@ -213,22 +203,23 @@ public class PDFClient extends JFrame {
                 out.flush();
 
                 Object response = in.readObject();
-                if (response instanceof PDFProtocol.SearchResponse) {
-                    PDFProtocol.SearchResponse searchResponse = (PDFProtocol.SearchResponse) response;
+                if (response instanceof PDFProtocol.SearchResponse searchResponse) {
                     if (searchResponse.getError() != null) {
                         appendToResults("Error in " + file.getName() + ": " + searchResponse.getError() + "\n");
-                    } else if (searchResponse.isFound()) {
-                        List<String> contexts = searchResponse.getContexts();
-                        appendToResults("Found " + contexts.size() + " matches in " + file.getName() + ":\n");
-                        for (int i = 0; i < contexts.size(); i++) {
-                            appendToResults("Match " + (i + 1) + ":\n");
-                            appendToResults(contexts.get(i) + "\n");
-                        }
-                        appendToResults("\n");
                     } else {
-                        appendToResults("No matches found in " + file.getName() + "\n");
+                        List<String> contexts = searchResponse.getContexts();
+                        if (contexts.isEmpty()) {
+                            appendToResults("No matches found in " + file.getName() + "\n");
+                        } else {
+                            appendToResults("Found " + contexts.size() + " matches in " + file.getName() + ":\n");
+                            for (int i = 0; i < contexts.size(); i++) {
+                                appendToResults("Match " + (i + 1) + ":\n" + contexts.get(i) + "\n");
+                            }
+                            appendToResults("\n");
+                        }
                     }
                 }
+
             } finally {
                 socket.close();
             }
