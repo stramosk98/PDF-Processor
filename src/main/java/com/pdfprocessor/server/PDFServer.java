@@ -90,13 +90,6 @@ public class PDFServer {
                 return;
             }
 
-            if (request.getPdfContent().length > PDFProtocol.MAX_FILE_SIZE) {
-                System.out.println("PDF file too large: " + request.getPdfContent().length + " bytes");
-                sendErrorResponse(out, "PDF file too large. Maximum size is " + 
-                    (PDFProtocol.MAX_FILE_SIZE / (1024 * 1024)) + "MB");
-                return;
-            }
-            
             // Create temporary file
             Path tempFile = null;
             try {
