@@ -16,7 +16,7 @@ PDF-Processor is an academic project that demonstrates the use of Tesseract OCR 
 
 1. Clone the repository:
 ```bash
-git clone [your-repository-url]
+git clone https://github.com/stramosk98/PDF-Processor.git
 ```
 
 2. Navigate to the project directory:
