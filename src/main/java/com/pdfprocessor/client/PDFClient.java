@@ -42,6 +42,8 @@ public class PDFClient extends JFrame {
     private final List<File> selectedFiles;
     private final ExecutorService executorService;
     private static final int MAX_CONCURRENT_SEARCHES = 2;
+    private int completedSearches;
+    private final Object completionLock = new Object();
 
     public PDFClient() {
         super("PDF Search Client");
@@ -156,16 +158,36 @@ public class PDFClient extends JFrame {
         // Disable UI during search
         setUIEnabled(false);
         resultArea.setText("Processing files...\n");
+        
+        // Reset completion counter
+        completedSearches = 0;
 
         // Process each file concurrently
+        int totalFiles = selectedFiles.size();
         for (File file : selectedFiles) {
-            executorService.submit(() -> processFile(file, host, port, searchText));
+            executorService.submit(() -> {
+                processFile(file, host, port, searchText);
+                synchronized (completionLock) {
+                    completedSearches++;
+                    if (completedSearches == totalFiles) {
+                        SwingUtilities.invokeLater(() -> {
+                            // Clear selected files
+                            selectedFiles.clear();
+                            fileListModel.clear();
+                            // Re-enable UI
+                            setUIEnabled(true);
+                            appendToResults("\n=== All files processed ===\n");
+                            appendToResults("Select new files to perform another search\n");
+                        });
+                    }
+                }
+            });
         }
     }
 
     private void processFile(File file, String host, int port, String searchText) {
         try {
-            appendToResults("Starting search in: " + file.getName() + "\n");
+            appendToResults("\nStarting search in: " + file.getName() + "\n");
             
             Socket socket = new Socket();
             socket.connect(new java.net.InetSocketAddress(host, port), 5000);
@@ -196,7 +218,13 @@ public class PDFClient extends JFrame {
                     if (searchResponse.getError() != null) {
                         appendToResults("Error in " + file.getName() + ": " + searchResponse.getError() + "\n");
                     } else if (searchResponse.isFound()) {
-                        appendToResults("Found match in " + file.getName() + "!\nContext: " + searchResponse.getContext() + "\n\n");
+                        List<String> contexts = searchResponse.getContexts();
+                        appendToResults("Found " + contexts.size() + " matches in " + file.getName() + ":\n");
+                        for (int i = 0; i < contexts.size(); i++) {
+                            appendToResults("Match " + (i + 1) + ":\n");
+                            appendToResults(contexts.get(i) + "\n");
+                        }
+                        appendToResults("\n");
                     } else {
                         appendToResults("No matches found in " + file.getName() + "\n");
                     }
@@ -222,9 +250,6 @@ public class PDFClient extends JFrame {
         searchField.setEnabled(enabled);
         selectFileButton.setEnabled(enabled);
         searchButton.setEnabled(enabled && !selectedFiles.isEmpty());
-        if (enabled) {
-            appendToResults("\n--- Search completed ---\n");
-        }
     }
 
     private void shutdownExecutor() {

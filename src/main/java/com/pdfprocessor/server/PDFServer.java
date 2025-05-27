@@ -7,6 +7,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -121,14 +123,21 @@ public class PDFServer {
                 
                 System.out.println("Searching for phrase: '" + searchPhrase + "'");
                 PDFProtocol.SearchResponse response;
-                if (formattedText.contains(searchPhrase)) {
-                    int index = formattedText.indexOf(searchPhrase);
-                    String context = extractContext(formattedText, index, searchPhrase);
-                    response = new PDFProtocol.SearchResponse(true, context, null);
-                    System.out.println("Match found with context");
+                
+                List<String> contexts = new ArrayList<>();
+                int lastIndex = 0;
+                while ((lastIndex = formattedText.indexOf(searchPhrase, lastIndex)) != -1) {
+                    String context = extractContext(formattedText, lastIndex, searchPhrase);
+                    contexts.add(context);
+                    lastIndex += searchPhrase.length();
+                }
+                
+                if (!contexts.isEmpty()) {
+                    response = new PDFProtocol.SearchResponse(true, contexts, null);
+                    System.out.println("Found " + contexts.size() + " matches");
                 } else {
                     response = new PDFProtocol.SearchResponse(false, null, null);
-                    System.out.println("No match found");
+                    System.out.println("No matches found");
                 }
                 
                 if (!clientSocket.isClosed() && clientSocket.isConnected()) {

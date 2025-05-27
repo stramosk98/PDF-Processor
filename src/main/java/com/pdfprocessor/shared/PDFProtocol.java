@@ -1,6 +1,8 @@
 package com.pdfprocessor.shared;
 
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
 
 public class PDFProtocol {
     public static final int DEFAULT_PORT = 12349;
@@ -34,12 +36,12 @@ public class PDFProtocol {
     public static class SearchResponse implements Serializable {
         private static final long serialVersionUID = 1L;
         private final boolean found;
-        private final String context;
+        private final List<String> contexts;
         private final String error;
 
-        public SearchResponse(boolean found, String context, String error) {
+        public SearchResponse(boolean found, List<String> contexts, String error) {
             this.found = found;
-            this.context = context;
+            this.contexts = contexts != null ? contexts : new ArrayList<>();
             this.error = error;
         }
 
@@ -47,8 +49,8 @@ public class PDFProtocol {
             return found;
         }
 
-        public String getContext() {
-            return context;
+        public List<String> getContexts() {
+            return contexts;
         }
 
         public String getError() {
