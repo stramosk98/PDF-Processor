@@ -6,9 +6,8 @@ public class Config {
     private final String filesDirectory;
 
     private Config() {
-        // Default configuration values
         this.maxConcurrentThreads = Runtime.getRuntime().availableProcessors();
-        this.filesDirectory = "pdfs"; // Default directory for PDFs
+        this.filesDirectory = "pdfs";
     }
 
     public static synchronized Config getInstance() {

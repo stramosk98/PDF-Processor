@@ -56,8 +56,7 @@ public class PDFClient extends JFrame {
         JPanel centerPanel = new JPanel(new BorderLayout(5, 5));
         JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 5));
 
-        // Initialize components
-        hostField = new JTextField("localhost");
+        hostField = new JTextField("192.168.1.6");
         portField = new JTextField(String.valueOf(PDFProtocol.DEFAULT_PORT));
         searchField = new JTextField();
         resultArea = new JTextArea();
@@ -66,13 +65,11 @@ public class PDFClient extends JFrame {
         searchButton = new JButton("Search All");
         searchButton.setEnabled(false);
 
-        // Initialize file list
         fileListModel = new DefaultListModel<>();
         fileList = new JList<>(fileListModel);
         JScrollPane fileListScroller = new JScrollPane(fileList);
         fileListScroller.setBorder(BorderFactory.createTitledBorder("Selected Files"));
 
-        // Add components to panels
         topPanel.add(new JLabel("Host:"));
         topPanel.add(hostField);
         topPanel.add(new JLabel("Port:"));
@@ -86,23 +83,18 @@ public class PDFClient extends JFrame {
         bottomPanel.add(selectFileButton);
         bottomPanel.add(searchButton);
 
-        // Add panels to frame
         add(topPanel, BorderLayout.NORTH);
         add(centerPanel, BorderLayout.CENTER);
         add(bottomPanel, BorderLayout.SOUTH);
 
-        // Add button listeners
         selectFileButton.addActionListener(e -> selectFiles());
         searchButton.addActionListener(e -> performSearch());
 
-        // Set frame properties
         setSize(800, 600);
         setLocationRelativeTo(null);
         
-        // Add border padding
         ((JPanel)getContentPane()).setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        // Add shutdown hook for executor
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdownExecutor));
     }
 
@@ -146,14 +138,11 @@ public class PDFClient extends JFrame {
             return;
         }
 
-        // Disable UI during search
         setUIEnabled(false);
         resultArea.setText("Processing files...\n");
         
-        // Reset completion counter
         completedSearches = 0;
 
-        // Process each file concurrently
         int totalFiles = selectedFiles.size();
         for (File file : selectedFiles) {
             executorService.submit(() -> {
@@ -162,10 +151,8 @@ public class PDFClient extends JFrame {
                     completedSearches++;
                     if (completedSearches == totalFiles) {
                         SwingUtilities.invokeLater(() -> {
-                            // Clear selected files
                             selectedFiles.clear();
                             fileListModel.clear();
-                            // Re-enable UI
                             setUIEnabled(true);
                             appendToResults("\n=== All files processed ===\n");
                             appendToResults("Select new files to perform another search\n");
@@ -203,23 +190,22 @@ public class PDFClient extends JFrame {
                 out.flush();
 
                 Object response = in.readObject();
-                if (response instanceof PDFProtocol.SearchResponse searchResponse) {
+                if (response instanceof PDFProtocol.SearchResponse) {
+                    PDFProtocol.SearchResponse searchResponse = (PDFProtocol.SearchResponse) response;
                     if (searchResponse.getError() != null) {
                         appendToResults("Error in " + file.getName() + ": " + searchResponse.getError() + "\n");
-                    } else {
+                    } else if (searchResponse.isFound()) {
                         List<String> contexts = searchResponse.getContexts();
-                        if (contexts.isEmpty()) {
-                            appendToResults("No matches found in " + file.getName() + "\n");
-                        } else {
-                            appendToResults("Found " + contexts.size() + " matches in " + file.getName() + ":\n");
-                            for (int i = 0; i < contexts.size(); i++) {
-                                appendToResults("Match " + (i + 1) + ":\n" + contexts.get(i) + "\n");
-                            }
-                            appendToResults("\n");
+                        appendToResults("Found " + contexts.size() + " matches in " + file.getName() + ":\n");
+                        for (int i = 0; i < contexts.size(); i++) {
+                            appendToResults("Match " + (i + 1) + ":\n");
+                            appendToResults(contexts.get(i) + "\n");
                         }
+                        appendToResults("\n");
+                    } else {
+                        appendToResults("No matches found in " + file.getName() + "\n");
                     }
                 }
-
             } finally {
                 socket.close();
             }

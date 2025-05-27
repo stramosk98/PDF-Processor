@@ -14,10 +14,9 @@ public class OCRProcessor {
         tesseract = new Tesseract();
         configureDataPath();
         
-        // Configure Tesseract
-        tesseract.setLanguage("eng"); // Set to English
-        tesseract.setPageSegMode(1); // Automatic page segmentation with OSD
-        tesseract.setOcrEngineMode(1); // Neural nets LSTM engine
+        tesseract.setLanguage("eng"); 
+        tesseract.setPageSegMode(1); 
+        tesseract.setOcrEngineMode(1);
     }
 
     private void configureDataPath() {

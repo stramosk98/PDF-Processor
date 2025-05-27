@@ -58,14 +58,13 @@ public class PDFServer {
         ObjectInputStream in = null;
         
         try {
-            // Configure socket
-            clientSocket.setSoTimeout(60000); // 60 seconds timeout
+            clientSocket.setSoTimeout(60000); 
             clientSocket.setTcpNoDelay(true);
             clientSocket.setKeepAlive(true);
             
             System.out.println("Creating output stream...");
             out = new ObjectOutputStream(clientSocket.getOutputStream());
-            out.flush(); // Important: flush the header
+            out.flush();
             
             System.out.println("Creating input stream...");
             in = new ObjectInputStream(clientSocket.getInputStream());
@@ -83,20 +82,17 @@ public class PDFServer {
             System.out.println("Processing search request for file: " + request.getFileName() + 
                              ", search phrase: '" + request.getSearchText() + "'");
             
-            // Validate request
             if (request.getPdfContent() == null || request.getSearchText() == null) {
                 System.out.println("Invalid request data - null content or search phrase");
                 sendErrorResponse(out, "Invalid request data");
                 return;
             }
 
-            // Create temporary file
             Path tempFile = null;
             try {
                 tempFile = Files.createTempFile("pdf_", ".pdf");
                 System.out.println("Created temporary file: " + tempFile);
                 
-                System.out.println("Writing PDF content to temporary file...");
                 Files.write(tempFile, request.getPdfContent());
                 
                 System.out.println("Processing PDF with OCR...");
@@ -161,7 +157,6 @@ public class PDFServer {
             sendErrorResponse(out, "Server error: " + e.getMessage());
         } finally {
             System.out.println("Cleaning up connection...");
-            // Close streams
             if (out != null) {
                 try {
                     out.flush();
@@ -177,7 +172,6 @@ public class PDFServer {
                     System.out.println("Error closing input stream: " + e.getMessage());
                 }
             }
-            // Close socket
             try {
                 if (!clientSocket.isClosed()) {
                     clientSocket.close();
